@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: zerkalo-tryon
+    runtime: node
+    plan: free
+    branch: main
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      # Впишете значение сами в форме Render при разворачивании —
+      # ключ никогда не попадает в код и не сохраняется в репозитории.
+      - key: GEMINI_API_KEY
+        sync: false
+      # Пока приложение открыто только вам для теста, звёздочка безопасна.
+      # Когда откроете доступ пользовательницам, замените на адрес
+      # вашего приложения, чтобы чужие сайты не могли дёргать ваш сервер.
+      - key: APP_ORIGIN
+        value: "*"
