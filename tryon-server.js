@@ -19,6 +19,27 @@ const KEY = process.env.GEMINI_API_KEY;
 const TEXT_MODEL = "gemini-3.6-flash";
 
 /* ------------------------------------------------------------
+   Память для кодов доступа. Без базы код можно ввести с любого
+   числа устройств, с ней — только с одного, дальше он считается
+   использованным. Бесплатная база Upstash, если её не подключили,
+   проверка на повтор просто отключается, а не ломает вход.
+   ------------------------------------------------------------ */
+const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL;
+const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+
+// true — код забрали впервые, false — уже был использован раньше,
+// null — база не подключена, проверка пропускается
+async function claimCodeOnce(code) {
+  if (!UPSTASH_URL || !UPSTASH_TOKEN) return null;
+  const key = "used:" + code;
+  const r = await fetch(`${UPSTASH_URL}/setnx/${encodeURIComponent(key)}/${Date.now()}`, {
+    headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` },
+  });
+  const d = await r.json();
+  return d.result === 1;
+}
+
+/* ------------------------------------------------------------
    Разбор фото. Внутри чата Claude такие запросы к api.anthropic.com
    идут напрямую и бесплатно — так эта часть и была впервые собрана.
    На обычном сайте прямой запрос из браузера к api.anthropic.com
@@ -244,7 +265,7 @@ async function generateRef(desc, kind) {
   }[kind] || "studio beauty portrait, plain light grey backdrop";
 
   const prompt = `Photorealistic reference photograph. ${frame}.
-Subject: ${desc}.
+Subject: young woman in her early twenties, ${desc}.
 Natural skin texture with visible pores, individual hair strands, realistic studio lighting.
 Not an illustration, not 3D, not airbrushed, no beauty filter.
 The person must be a generic model, not resembling any real or famous individual.`;
@@ -295,6 +316,39 @@ app.post("/reference", async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: "Сбой запроса: " + e.message });
   }
+});
+
+/* ------------------------------------------------------------
+   Ручная выдача доступа на время теста, пока не подключена
+   настоящая оплата. Коды задаются переменной окружения
+   PAYWALL_CODE на Render — можно перечислить несколько через
+   запятую, например: GLOWUP-СЕНТ,GLOWUP-ОКТ,MARIYA-01.
+   Старые коды продолжают работать, пока их не убрали из списка,
+   новые добавляются рядом. Меняется в любой момент без
+   пересборки приложения.
+   ------------------------------------------------------------ */
+app.post("/redeem", async (req, res) => {
+  const code = (req.body?.code || "").trim().toLowerCase();
+  const raw = process.env.PAYWALL_CODE;
+
+  if (!raw) return res.status(500).json({ error: "PAYWALL_CODE не задан на сервере" });
+  if (!code) return res.status(400).json({ error: "Код не введён" });
+
+  const valid = raw.split(",").map((c) => c.trim().toLowerCase()).filter(Boolean);
+  if (!valid.includes(code)) {
+    return res.status(403).json({ error: "Код неверный" });
+  }
+
+  try {
+    const first = await claimCodeOnce(code);
+    if (first === false) {
+      return res.status(409).json({ error: "Этот код уже использован на другом устройстве" });
+    }
+  } catch {
+    // сбой базы не должен ломать вход тем, кто уже одобрен по коду
+  }
+
+  res.json({ ok: true });
 });
 
 app.listen(process.env.PORT || 8787, () => console.log("Примерка слушает порт 8787"));
