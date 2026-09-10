@@ -51,7 +51,7 @@ app.post("/gemini-text", async (req, res) => {
         headers: { "Content-Type": "application/json", "x-goog-api-key": KEY },
         body: JSON.stringify({
           contents: [{ parts }],
-          generationConfig: { maxOutputTokens: 1200, responseMimeType: "application/json" },
+          generationConfig: { maxOutputTokens: 2200, responseMimeType: "application/json" },
         }),
       }
     );
