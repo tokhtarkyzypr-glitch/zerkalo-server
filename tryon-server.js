@@ -13,6 +13,71 @@ app.use(cors({ origin: process.env.APP_ORIGIN || "*" }));
 app.use(express.json({ limit: "12mb" }));
 
 const KEY = process.env.GEMINI_API_KEY;
+// Модель для текстового разбора (типаж, стрижки, лицо, гардероб).
+// Отдельная от моделей рендера выше — та рисует картинки, эта читает
+// фото и отвечает текстом. Бесплатный уровень Google.
+const TEXT_MODEL = "gemini-2.5-flash";
+
+/* ------------------------------------------------------------
+   Разбор фото. Внутри чата Claude такие запросы к api.anthropic.com
+   идут напрямую и бесплатно — так эта часть и была впервые собрана.
+   На обычном сайте прямой запрос из браузера к api.anthropic.com
+   не пройдёт никогда, а платный доступ к Claude через API стоит
+   денег с первого запроса. Вместо этого разбор идёт здесь же,
+   через уже настроенный бесплатный ключ Google — тот же самый,
+   что рисует стрижки выше.
+
+   Сервер принимает запрос в прежнем виде (blocks — фото и текст
+   вопроса) и сам переводит его в формат Gemini, а ответ приводит
+   обратно к тому виду, который уже понимает приложение. Так на
+   стороне сайта ничего менять не пришлось, кроме адреса.
+   ------------------------------------------------------------ */
+app.post("/gemini-text", async (req, res) => {
+  if (!KEY) return res.status(500).json({ error: "GEMINI_API_KEY не задан" });
+  const blocks = req.body?.messages?.[0]?.content;
+  if (!Array.isArray(blocks)) return res.status(400).json({ error: "Нет содержимого запроса" });
+
+  const parts = blocks.map((b) =>
+    b.type === "image"
+      ? { inline_data: { mime_type: b.source.media_type, data: b.source.data } }
+      : { text: b.text }
+  );
+
+  try {
+    const r = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${TEXT_MODEL}:generateContent`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": KEY },
+        body: JSON.stringify({
+          contents: [{ parts }],
+          generationConfig: { maxOutputTokens: 1200, responseMimeType: "application/json" },
+        }),
+      }
+    );
+    const data = await r.json();
+
+    if (data.error) return res.status(502).json({ error: { message: data.error.message } });
+
+    const cand = data.candidates?.[0];
+    const finish = cand?.finishReason;
+    if (finish && !["STOP", "MAX_TOKENS"].includes(finish)) {
+      return res.status(422).json({ error: { message: "Модель отклонила запрос: " + finish } });
+    }
+
+    const text = (cand?.content?.parts || []).map((p) => p.text || "").join("");
+    if (!text.trim()) return res.status(502).json({ error: { message: "Пустой ответ модели" } });
+
+    // приводим к тому же виду, что раньше приходил от Claude,
+    // чтобы разбор на сайте не пришлось переписывать
+    res.json({
+      content: [{ type: "text", text }],
+      stop_reason: finish === "MAX_TOKENS" ? "max_tokens" : "end_turn",
+    });
+  } catch (e) {
+    res.status(500).json({ error: { message: "Сбой запроса: " + e.message } });
+  }
+});
 
 /* Три уровня качества. Выбор влияет на цену и скорость.
    preview  — быстрый черновик, пока она листает варианты
