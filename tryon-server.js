@@ -57,7 +57,7 @@ app.post("/gemini-text", async (req, res) => {
             // модели линейки 3.x тратят часть лимита на скрытые
             // рассуждения; для короткого структурированного ответа
             // они не нужны, поэтому сокращаем их до минимума
-            thinkingConfig: { thinkingLevel: "low" },
+            thinkingConfig: { thinkingLevel: "LOW" },
           },
         }),
       }
